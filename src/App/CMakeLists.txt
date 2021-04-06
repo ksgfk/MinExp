@@ -1,4 +1,4 @@
-add_executable(MineApp main.cpp)
+add_executable(MineApp main.cpp ShadowPipeline.cpp)
 
 target_link_libraries(MineApp PUBLIC minecore)
 

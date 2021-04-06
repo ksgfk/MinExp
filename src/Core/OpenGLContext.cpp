@@ -160,7 +160,7 @@ std::pair<int, int> Mine::GetFrameBufferSizeOpenGL() {
 
 #endif
 
-GPUBufferOpenGL::GPUBufferOpenGL() = default;
+GPUBufferOpenGL::GPUBufferOpenGL() : _handle(0), _size(0), _target(0), _usage(0) {}
 
 GPUBufferOpenGL::GPUBufferOpenGL(GLenum target, GLenum usage, const void* data, GLsizeiptr size) {
   MineGLFuncCall(glGenBuffers(1, &_handle));
@@ -227,7 +227,7 @@ void Mine::LogGLFuncCall(const char* filename, int lineNum) {
   }
 }
 
-GPUMeshOpenGL::GPUMeshOpenGL() = default;
+GPUMeshOpenGL::GPUMeshOpenGL() : _vao(0), _vbo(), _ebo() {}
 
 GPUMeshOpenGL::GPUMeshOpenGL(const GPUMeshDescOpenGL& desc) {
   _vbo = GPUBufferOpenGL(GL_ARRAY_BUFFER, GL_STATIC_DRAW, desc.data.data(), desc.data.size() * sizeof(float));
@@ -284,7 +284,7 @@ struct _Temp {
 };
 bool operator<(const _Temp& a, const _Temp& b) { return a.v == b.v ? (a.t == b.t ? a.n < b.n : a.t < b.t) : a.v < b.v; }
 
-std::shared_ptr<GPUMeshOpenGL> Mine::CreateMeshBufferOpenGL(const Mesh& mesh) {
+std::shared_ptr<GPUMeshOpenGL> Mine::CreateMeshBufferOpenGL(const Mesh& mesh, bool hasNormal, bool hasTexcoord) {
   std::vector<float> buffer;
   std::vector<unsigned int> indice;
   std::map<_Temp, unsigned int> cull;
@@ -300,12 +300,27 @@ std::shared_ptr<GPUMeshOpenGL> Mine::CreateMeshBufferOpenGL(const Mesh& mesh) {
         buffer.emplace_back(p.x);
         buffer.emplace_back(p.y);
         buffer.emplace_back(p.z);
-        buffer.emplace_back(t.x);
-        buffer.emplace_back(t.y);
-        buffer.emplace_back(n.x);
-        buffer.emplace_back(n.y);
-        buffer.emplace_back(n.z);
-        cull.emplace(_Temp{f.verticeIdx[i], f.texcoordIdx[i], f.normalIdx[i]}, id);
+        if (hasTexcoord) {
+          buffer.emplace_back(t.x);
+          buffer.emplace_back(t.y);
+        }
+        if (hasNormal) {
+          buffer.emplace_back(n.x);
+          buffer.emplace_back(n.y);
+          buffer.emplace_back(n.z);
+        }
+        if (hasTexcoord && hasNormal) {
+          cull.emplace(_Temp{f.verticeIdx[i], f.texcoordIdx[i], f.normalIdx[i]}, id);
+        }
+        if (!hasTexcoord && hasNormal) {
+          cull.emplace(_Temp{f.verticeIdx[i], -1, f.normalIdx[i]}, id);
+        }
+        if (hasTexcoord && !hasNormal) {
+          cull.emplace(_Temp{f.verticeIdx[i], f.texcoordIdx[i], -1}, id);
+        }
+        if (!hasTexcoord && !hasNormal) {
+          cull.emplace(_Temp{f.verticeIdx[i], -1, -1}, id);
+        }
         indice.emplace_back(id);
         id++;
       } else {
@@ -316,12 +331,16 @@ std::shared_ptr<GPUMeshOpenGL> Mine::CreateMeshBufferOpenGL(const Mesh& mesh) {
   GPUMeshDescOpenGL desc;
   desc.data = std::move(buffer);
   desc.indices = std::move(indice);
-  GLsizei stride = (GLsizei)(sizeof(Vector3) + sizeof(Vector2) + sizeof(Vector3));
+  GLsizei stride = (GLsizei)(sizeof(Vector3) + (hasTexcoord ? sizeof(Vector2) : 0) + (hasNormal ? sizeof(Vector3) : 0));
   auto posOffset = sizeof(Vector3);
   auto texOffset = sizeof(Vector3) + sizeof(Vector2);
-  desc.attribDesc.emplace_back(VertexAttribDescOpenGL{0, 3, GL_FLOAT, stride, 0});          //pos
-  desc.attribDesc.emplace_back(VertexAttribDescOpenGL{1, 2, GL_FLOAT, stride, posOffset});  //texcoord
-  desc.attribDesc.emplace_back(VertexAttribDescOpenGL{2, 3, GL_FLOAT, stride, texOffset});  //normal
+  desc.attribDesc.emplace_back(VertexAttribDescOpenGL{0, 3, GL_FLOAT, stride, 0});  //pos
+  if (hasTexcoord) {
+    desc.attribDesc.emplace_back(VertexAttribDescOpenGL{1, 2, GL_FLOAT, stride, posOffset});  //texcoord
+  }
+  if (hasNormal) {
+    desc.attribDesc.emplace_back(VertexAttribDescOpenGL{2, 3, GL_FLOAT, stride, texOffset});  //normal
+  }
   return std::make_shared<GPUMeshOpenGL>(desc);
 }
 
@@ -348,7 +367,7 @@ static GLuint _ComplierShader(GLenum type, std::string_view src) {
   return s;
 }
 
-ShaderProgramOpenGL::ShaderProgramOpenGL() = default;
+ShaderProgramOpenGL::ShaderProgramOpenGL() : _handle(0) {}
 
 static UniformDescMapOpenGL _GetShaderUniformDesc(GLuint program) {
   UniformDescMapOpenGL map;
@@ -436,23 +455,40 @@ void ShaderProgramOpenGL::SetPass(const UniformMapOpenGL& uniform) const {
   for (; localIter != _uniformDesc.end() && uniformIter != uniform.end(); localIter++, uniformIter++) {
     assert(localIter->first == uniformIter->first);
     const auto& desc = localIter->second;
-    switch (desc.type) {
-      case GL_FLOAT:
-        MineGLFuncCall(glUniform1fv(desc.location, desc.count, &std::get<float>(uniformIter->second)));
-        break;
-      case GL_INT:
-        MineGLFuncCall(glUniform1iv(desc.location, desc.count, &std::get<int>(uniformIter->second)));
-        break;
-      case GL_FLOAT_VEC3:
-        MineGLFuncCall(glUniform3fv(desc.location, desc.count, &std::get<Vector3>(uniformIter->second).x));
-        break;
-      case GL_FLOAT_MAT4:
-        MineGLFuncCall(glUniformMatrix4fv(desc.location, desc.count, GL_FALSE, &std::get<Matrix4x4>(uniformIter->second).m11));
-        break;
-      case GL_SAMPLER_2D:
-        break;
-      default:
-        throw "unsupported type";
+    if (desc.count == 1) {
+      switch (desc.type) {
+        case GL_FLOAT:
+          MineGLFuncCall(glUniform1f(desc.location, std::get<float>(uniformIter->second)));
+          break;
+        case GL_INT:
+          MineGLFuncCall(glUniform1i(desc.location, std::get<int>(uniformIter->second)));
+          break;
+        case GL_FLOAT_VEC3:
+          MineGLFuncCall(glUniform3fv(desc.location, desc.count, &std::get<Vector3>(uniformIter->second).x));
+          break;
+        case GL_FLOAT_MAT4:
+          MineGLFuncCall(glUniformMatrix4fv(desc.location, desc.count, GL_FALSE, &std::get<Matrix4x4>(uniformIter->second).m11));
+          break;
+        case GL_SAMPLER_2D:
+          MineGLFuncCall(glUniform1i(desc.location, std::get<int>(uniformIter->second)));
+          break;
+        default:
+          throw "unsupported type";
+      }
+    } else {
+      const auto& uniObj = uniformIter->second;
+      switch (desc.type) {
+        case GL_FLOAT_MAT4:
+          MineGLFuncCall(glUniformMatrix4fv(desc.location,
+                                            desc.count,
+                                            GL_FALSE,
+                                            (GLfloat*)std::get<UniformArrayObjectOpenGL<Matrix4x4>>(uniObj).data()));
+          break;
+        case GL_SAMPLER_2D:
+          MineGLFuncCall(glUniform1iv(desc.location, desc.count, std::get<UniformArrayObjectOpenGL<int>>(uniObj).data()));
+        default:
+          throw "unsupported type";
+      }
     }
   }
 }
@@ -471,20 +507,31 @@ std::shared_ptr<ShaderProgramOpenGL> Mine::CreateShaderProgramOpenGL(const std::
 
 ShaderUniformOpenGL::ShaderUniformOpenGL() = default;
 
-UniformObjectOpenGL ShaderUniformOpenGL::CreateUniformObject(GLenum type) {
-  switch (type) {
-    case GL_FLOAT:
-      return UniformObjectOpenGL(0.0f);
-    case GL_INT:
-      return UniformObjectOpenGL(0);
-    case GL_FLOAT_VEC3:
-      return UniformObjectOpenGL(Vector3());
-    case GL_FLOAT_MAT4:
-      return UniformObjectOpenGL(Matrix4x4());
-    case GL_SAMPLER_2D:
-      return UniformObjectOpenGL(0);
-    default:
-      throw "unsupported type";
+UniformObjectOpenGL ShaderUniformOpenGL::CreateUniformObject(GLenum type, int arrayCount) {
+  if (arrayCount == 1) {
+    switch (type) {
+      case GL_FLOAT:
+        return UniformObjectOpenGL(0.0f);
+      case GL_INT:
+        return UniformObjectOpenGL(0);
+      case GL_FLOAT_VEC3:
+        return UniformObjectOpenGL(Vector3());
+      case GL_FLOAT_MAT4:
+        return UniformObjectOpenGL(Matrix4x4());
+      case GL_SAMPLER_2D:
+        return UniformObjectOpenGL(0);
+      default:
+        throw "unsupported type";
+    }
+  } else {
+    switch (type) {
+      case GL_FLOAT_MAT4:
+        return UniformObjectOpenGL(std::move(std::vector<Matrix4x4>(arrayCount, Matrix4x4())));
+      case GL_SAMPLER_2D:
+        return UniformObjectOpenGL(std::move(std::vector<int>(arrayCount, 0)));
+      default:
+        throw "unsupported type";
+    }
   }
 }
 
@@ -510,7 +557,7 @@ ShaderUniformOpenGL& ShaderUniformOpenGL::operator=(ShaderUniformOpenGL&& o) {
 
 ShaderUniformOpenGL::ShaderUniformOpenGL(const UniformDescMapOpenGL& map) {
   for (const auto& desc : map) {
-    _objectMap.emplace(std::string_view(desc.first), CreateUniformObject(desc.second.type));
+    _objectMap.emplace(std::string_view(desc.first), CreateUniformObject(desc.second.type, desc.second.count));
   }
 }
 
@@ -551,22 +598,38 @@ MeshRendererOpenGL& MeshRendererOpenGL::operator=(MeshRendererOpenGL&& o) {
 }
 
 void MeshRendererOpenGL::Render() const {
+  if (!shader.expired()) {
+    auto s = shader.lock();
+    s->Bind();
+    if (!material.expired()) {
+      auto m = material.lock();
+      s->SetPass(m->GetUniformObjects());
+    }
+  }
   auto e = mesh.lock();
   e->Bind();
   MineGLFuncCall(glDrawElements(GL_TRIANGLES, e->GetIndexCount(), GL_UNSIGNED_INT, (void*)nullptr));
+  MineGLFuncCall(glBindTexture(GL_TEXTURE_2D, 0));
 }
 
-GPUTexture2DOpenGL::GPUTexture2DOpenGL() = default;
+GPUTexture2DOpenGL::GPUTexture2DOpenGL() : _handle(0), _width(0), _height(0) {}
 
 GPUTexture2DOpenGL::GPUTexture2DOpenGL(const GPUTexture2DDescOpenGL& desc) {
   MineGLFuncCall(glGenTextures(1, &_handle));
   MineGLFuncCall(glBindTexture(GL_TEXTURE_2D, _handle));
   MineGLFuncCall(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, desc.wrapS));
   MineGLFuncCall(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, desc.wrapT));
+  if (desc.wrapS == GL_CLAMP_TO_BORDER || desc.wrapT == GL_CLAMP_TO_BORDER) {
+    MineGLFuncCall(glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, &desc.borderColor.x));
+  }
   MineGLFuncCall(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, desc.minFliter));
   MineGLFuncCall(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, desc.magFliter));
   MineGLFuncCall(glTexImage2D(GL_TEXTURE_2D, 0, desc.format, desc.width, desc.height, 0, desc.dataFormat, desc.dataType, desc.dataPtr));
-  MineGLFuncCall(glGenerateMipmap(GL_TEXTURE_2D));
+  if (desc.mipmapLevel > 0) {
+    MineGLFuncCall(glGenerateMipmap(GL_TEXTURE_2D));
+  }
+  _width = desc.width;
+  _height = desc.height;
 }
 
 GPUTexture2DOpenGL::GPUTexture2DOpenGL(GPUTexture2DOpenGL&& o) {
@@ -624,12 +687,126 @@ std::shared_ptr<GPUTexture2DOpenGL> Mine::CreateTexture2DOpenGL(const Texture2D&
   return CreateTexture2DOpenGL(desc);
 }
 
-void Mine::SetPointLightOpenGL(ShaderUniformOpenGL& material, const PointLight& light, const Vector3& camPos) {
-  material.SetValue(LIGHT_KA, light.ka);
-  material.SetValue(LIGHT_KD, light.kd);
-  material.SetValue(LIGHT_KS, light.ks);
-  material.SetValue(LIGHT_POS, light.pos);
-  material.SetValue(LIGHT_INTENSITY, light.intensity);
-  material.SetValue(LIGHT_SHININESS, light.shininess);
-  material.SetValue(LIGHT_EYEPOS, camPos);
+FrameBufferOpenGL::FrameBufferOpenGL() : _handle(0) {}
+
+FrameBufferOpenGL::FrameBufferOpenGL(FrameBufferOpenGL&& o) {
+  _handle = o._handle;
+  o._handle = 0;
+}
+
+FrameBufferOpenGL& FrameBufferOpenGL::operator=(FrameBufferOpenGL&& o) {
+  _handle = o._handle;
+  o._handle = 0;
+  return *this;
+}
+
+FrameBufferOpenGL::~FrameBufferOpenGL() {
+  Delete();
+}
+
+void FrameBufferOpenGL::Bind() const {
+  MineGLFuncCall(glBindFramebuffer(GL_FRAMEBUFFER, _handle));
+}
+
+void FrameBufferOpenGL::Unbind() const {
+  MineGLFuncCall(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+}
+
+bool FrameBufferOpenGL::BindTexture(const FrameBufferTextureDescOpenGL& desc) const {
+  MineGLFuncCall(glFramebufferTexture(desc.target, desc.attachment, desc.texture, desc.level));
+  GLenum result = MineGLFuncCall(glCheckFramebufferStatus(GL_FRAMEBUFFER));
+  return result == GL_FRAMEBUFFER_COMPLETE;
+}
+
+void FrameBufferOpenGL::Delete() {
+  if (_handle != 0) {
+    MineGLFuncCall(glDeleteFramebuffers(1, &_handle));
+  }
+  _handle = 0;
+}
+
+std::shared_ptr<FrameBufferOpenGL> Mine::CreateFrameBufferOpenGL() {
+  auto ptr = std::make_shared<FrameBufferOpenGL>();
+  MineGLFuncCall(glGenFramebuffers(1, &(ptr->_handle)));
+  return ptr;
+}
+
+ShadowMap2DOpenGL::ShadowMap2DOpenGL() = default;
+
+ShadowMap2DOpenGL::ShadowMap2DOpenGL(int width, int height) {
+  assert(width > 0 && height > 0);
+
+  _frameBuffer = CreateFrameBufferOpenGL();
+
+  GPUTexture2DDescOpenGL desc;
+  desc.wrapS = GL_CLAMP_TO_EDGE;
+  desc.wrapT = GL_CLAMP_TO_EDGE;
+  desc.borderColor = Vector4(1, 1, 1, 1);
+  desc.minFliter = GL_NEAREST;
+  desc.magFliter = GL_NEAREST;
+  desc.mipmapLevel = 0;
+  desc.format = GL_DEPTH_COMPONENT;
+  desc.width = width;
+  desc.height = height;
+  desc.dataFormat = GL_DEPTH_COMPONENT;
+  desc.dataType = GL_FLOAT;
+  desc.dataPtr = nullptr;
+  _depthMap = CreateTexture2DOpenGL(desc);
+
+  _frameBuffer->Bind();
+  MineGLFuncCall(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, _depthMap->GetHandle(), 0));
+  GLenum result = MineGLFuncCall(glCheckFramebufferStatus(GL_FRAMEBUFFER));
+  if (result != GL_FRAMEBUFFER_COMPLETE) {
+    throw "cant init frame buffer";
+  }
+  MineGLFuncCall(glDrawBuffer(GL_NONE));
+  MineGLFuncCall(glReadBuffer(GL_NONE));
+  _frameBuffer->Unbind();
+}
+
+ShadowMap2DOpenGL::ShadowMap2DOpenGL(ShadowMap2DOpenGL&& o) {
+  _frameBuffer = std::move(o._frameBuffer);
+  _depthMap = std::move(o._depthMap);
+}
+
+ShadowMap2DOpenGL::~ShadowMap2DOpenGL() {
+  Delete();
+}
+
+ShadowMap2DOpenGL& ShadowMap2DOpenGL::operator=(ShadowMap2DOpenGL&& o) {
+  _frameBuffer = std::move(o._frameBuffer);
+  _depthMap = std::move(o._depthMap);
+  return *this;
+}
+
+void ShadowMap2DOpenGL::Bind() const {
+  _frameBuffer->Bind();
+}
+
+void ShadowMap2DOpenGL::Unbind() const {
+  _frameBuffer->Unbind();
+}
+
+void ShadowMap2DOpenGL::Delete() {
+  if (_frameBuffer != nullptr) {
+    _frameBuffer->Delete();
+  }
+  if (_depthMap != nullptr) {
+    _depthMap->Delete();
+  }
+}
+
+const GPUTexture2DOpenGL& ShadowMap2DOpenGL::GetDepthMap() const {
+  return *_depthMap;
+}
+
+static std::string __head("light[");
+static std::string __intensityTail("].intensity");
+static std::string __posTail("].pos");
+static std::string __colorTail("].color");
+
+void Mine::SetPointLightValues(const PointLight& light, int index, ShaderUniformOpenGL& uniform) {
+  uniform.SetValue(__head + std::to_string(index) + __intensityTail, light.intensity);
+  uniform.SetValue(__head + std::to_string(index) + __posTail, light.pos);
+  uniform.SetValue(__head + std::to_string(index) + __colorTail, light.color);
 }

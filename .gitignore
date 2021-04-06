@@ -50,3 +50,5 @@ cmake_uninstall.cmake
 .idea
 cmake-build-debug
 cmake-build-release
+
+asset/ying

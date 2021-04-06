@@ -24,6 +24,15 @@ struct Mesh {
   std::vector<Face> face;
 };
 
+struct MultiMesh {
+  using FaceArray = std::vector<Face>;
+  using ObjArray = std::vector<std::pair<std::string, FaceArray>>;
+
+  VertexAttrib attrib;
+  ObjArray obj;
+};
+
 Mesh LoadObjFromFile(const std::filesystem::path& p);
+MultiMesh LoadObjWithChildFromFile(const std::filesystem::path& p);
 
 }  // namespace Mine

@@ -87,7 +87,14 @@ struct ShaderUniformDescOpenGL {
 };
 
 using UniformDescMapOpenGL = std::map<std::string, ShaderUniformDescOpenGL>;
-using UniformObjectOpenGL = std::variant<int, float, Vector3, Matrix4x4>;
+template <typename T>
+using UniformArrayObjectOpenGL = std::vector<T>;
+using UniformObjectOpenGL = std::variant<int,
+                                         float,
+                                         Vector3,
+                                         Matrix4x4,
+                                         UniformArrayObjectOpenGL<Matrix4x4>,
+                                         UniformArrayObjectOpenGL<int>>;
 using UniformMapOpenGL = std::map<std::string_view, UniformObjectOpenGL>;
 
 class ShaderProgramOpenGL {
@@ -111,7 +118,7 @@ class ShaderProgramOpenGL {
 
 class ShaderUniformOpenGL {
  public:
-  static UniformObjectOpenGL CreateUniformObject(GLenum type);
+  static UniformObjectOpenGL CreateUniformObject(GLenum type, int arrayCount);
 
  private:
   UniformMapOpenGL _objectMap;
@@ -132,23 +139,16 @@ class ShaderUniformOpenGL {
     }
     iter->second.emplace<T>(value);
   }
+  template <typename T>
+  void SetArray(std::string_view name, int index, T value) {
+    auto iter = _objectMap.find(name);
+    if (iter == _objectMap.end()) {
+      return;
+    }
+    auto& array = std::get<UniformArrayObjectOpenGL<T>>(iter->second);
+    array[index] = value;
+  }
   const UniformMapOpenGL& GetUniformObjects() const;
-};
-
-class MeshRendererOpenGL {
- public:
-  std::weak_ptr<ShaderProgramOpenGL> shader;
-  std::weak_ptr<ShaderUniformOpenGL> material;
-  std::weak_ptr<GPUMeshOpenGL> mesh;
-
- public:
-  MeshRendererOpenGL();
-  MeshRendererOpenGL(const MeshRendererOpenGL& o);
-  MeshRendererOpenGL(MeshRendererOpenGL&& o);
-  ~MeshRendererOpenGL();
-  MeshRendererOpenGL& operator=(const MeshRendererOpenGL& o);
-  MeshRendererOpenGL& operator=(MeshRendererOpenGL&& o);
-  void Render() const;
 };
 
 struct GPUTexture2DDescOpenGL {
@@ -159,7 +159,7 @@ struct GPUTexture2DDescOpenGL {
    */
   GLint wrapS;
   GLint wrapT;
-
+  Vector4 borderColor;
   /*
    * GL_NEAREST
    * GL_LINEAR
@@ -179,6 +179,8 @@ struct GPUTexture2DDescOpenGL {
 class GPUTexture2DOpenGL {
  private:
   GLuint _handle;
+  int _width;
+  int _height;
 
  public:
   GPUTexture2DOpenGL();
@@ -190,6 +192,86 @@ class GPUTexture2DOpenGL {
   GPUTexture2DOpenGL& operator=(GPUTexture2DOpenGL&& o);
   void Bind(GLenum id) const;
   void Delete();
+  constexpr GLuint GetHandle() const { return _handle; }
+  constexpr int GetWidth() const { return _width; }
+  constexpr int GetHeight() const { return _height; }
+};
+
+class MeshRendererOpenGL {
+ public:
+  std::weak_ptr<ShaderProgramOpenGL> shader;
+  std::weak_ptr<ShaderUniformOpenGL> material;
+  std::weak_ptr<GPUMeshOpenGL> mesh;
+
+ public:
+  MeshRendererOpenGL();
+  MeshRendererOpenGL(const MeshRendererOpenGL& o);
+  MeshRendererOpenGL(MeshRendererOpenGL&& o);
+  ~MeshRendererOpenGL();
+  MeshRendererOpenGL& operator=(const MeshRendererOpenGL& o);
+  MeshRendererOpenGL& operator=(MeshRendererOpenGL&& o);
+  void Render() const;
+};
+
+struct FrameBufferTextureDescOpenGL {
+  /*
+   * GL_DRAW_FRAMEBUFFER
+   * GL_READ_FRAMEBUFFER
+   * GL_FRAMEBUFFER (equivalent to GL_DRAW_FRAMEBUFFER)
+   */
+  GLenum target;
+  /*
+   * GL_COLOR_ATTACHMENTi
+   * GL_DEPTH_ATTACHMENT
+   * GL_STENCIL_ATTACHMENT
+   * GL_DEPTH_STENCIL_ATTACHMENT
+   */
+  GLenum attachment;
+  GLenum textarget;
+  GLuint texture;
+  GLint level;
+};
+
+class FrameBufferOpenGL {
+ private:
+  GLuint _handle;
+
+ public:
+  FrameBufferOpenGL();
+  FrameBufferOpenGL(const FrameBufferOpenGL&) = delete;
+  FrameBufferOpenGL(FrameBufferOpenGL&& o);
+  FrameBufferOpenGL& operator=(const FrameBufferOpenGL&) = delete;
+  FrameBufferOpenGL& operator=(FrameBufferOpenGL&& o);
+  ~FrameBufferOpenGL();
+
+  void Bind() const;
+  void Unbind() const;
+  bool BindTexture(const FrameBufferTextureDescOpenGL& desc) const;
+  void Delete();
+
+  friend std::shared_ptr<FrameBufferOpenGL> CreateFrameBufferOpenGL();
+};
+
+class ShadowMap2DOpenGL {
+ private:
+  //emm...why shared ptr?
+  std::shared_ptr<FrameBufferOpenGL> _frameBuffer;
+  std::shared_ptr<GPUTexture2DOpenGL> _depthMap;
+
+ public:
+  ShadowMap2DOpenGL();
+  ShadowMap2DOpenGL(int width, int height);
+  ShadowMap2DOpenGL(const ShadowMap2DOpenGL&) = delete;
+  ShadowMap2DOpenGL(ShadowMap2DOpenGL&& o);
+  ~ShadowMap2DOpenGL();
+  ShadowMap2DOpenGL& operator=(const ShadowMap2DOpenGL&) = delete;
+  ShadowMap2DOpenGL& operator=(ShadowMap2DOpenGL&& o);
+
+  void Bind() const;
+  void Unbind() const;
+  void Delete();
+
+  const GPUTexture2DOpenGL& GetDepthMap() const;
 };
 
 void InitOpenGL(int width, int height, const char* title);
@@ -199,11 +281,13 @@ void* GetNativeWindowOpenGL();
 void SetFrameBufferResizeCallbackOpenGL(std::function<void(int, int)> callback);
 std::pair<int, int> GetFrameBufferSizeOpenGL();
 
-std::shared_ptr<GPUMeshOpenGL> CreateMeshBufferOpenGL(const Mesh& mesh);
+std::shared_ptr<GPUMeshOpenGL> CreateMeshBufferOpenGL(const Mesh& mesh, bool hasNormal = true, bool hasTexcoord = true);
 std::shared_ptr<ShaderProgramOpenGL> CreateShaderProgramOpenGL(const std::filesystem::path& path);
 std::shared_ptr<ShaderUniformOpenGL> CreateShaderUniformOpenGL(const ShaderProgramOpenGL& shader);
 std::shared_ptr<GPUTexture2DOpenGL> CreateTexture2DOpenGL(const GPUTexture2DDescOpenGL& desc);
 std::shared_ptr<GPUTexture2DOpenGL> CreateTexture2DOpenGL(const Texture2D& tex2d);
-void SetPointLightOpenGL(ShaderUniformOpenGL& material, const PointLight& light, const Vector3& camPos);
+std::shared_ptr<FrameBufferOpenGL> CreateFrameBufferOpenGL();
+
+void SetPointLightValues(const PointLight& light, int index, ShaderUniformOpenGL& uniform);
 
 }  // namespace Mine

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <utility>
 
 namespace Mine {
 
@@ -16,19 +17,25 @@ constexpr float Clamp(float f, float min, float max) { return f < min ? min : (f
 inline bool IsEqual(float a, float b) { return std::abs(a - b) < MINE_EPSILON; }
 
 struct Vector2 {
-  float x, y;
+  float x;
+  float y;
   constexpr Vector2() : Vector2(0, 0) {}
   constexpr Vector2(float x, float y) : x(x), y(y) {}
 };
 
 struct Vector3 {
-  float x, y, z;
+  float x;
+  float y;
+  float z;
   constexpr Vector3() : Vector3(0, 0, 0) {}
   constexpr Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
 };
 
 struct Vector4 {
-  float x, y, z, w;
+  float x;
+  float y;
+  float z;
+  float w;
   constexpr Vector4() : Vector4(0, 0, 0, 0) {}
   constexpr Vector4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
 };
@@ -139,6 +146,13 @@ constexpr Matrix4x4 Mul(const Matrix4x4& a, const Matrix4x4& b) {
                    (a.m41 * b.m14 + a.m42 * b.m24 + a.m43 * b.m34 + a.m44 * b.m44));
 }
 
+constexpr Vector4 Mul(const Matrix4x4& a, const Vector4& b) {
+  return Vector4(a.m11 * b.x + a.m12 * b.x + a.m13 * b.x + a.m14 * b.x,
+                 a.m21 * b.y + a.m22 * b.y + a.m23 * b.y + a.m24 * b.y,
+                 a.m31 * b.z + a.m32 * b.z + a.m33 * b.z + a.m34 * b.z,
+                 a.m41 * b.w + a.m42 * b.w + a.m43 * b.w + a.m44 * b.w);
+}
+
 constexpr Matrix4x4 LookAtRH(const Vector3& eyePos, const Vector3& target, const Vector3& up) {
   auto&& f = Normalize(Sub(target, eyePos));
   auto&& r = Normalize(Cross(f, up));
@@ -156,11 +170,11 @@ inline Matrix4x4 PerspectiveRH(float fov, float aspectRatio, float zNear, float 
   float b = -t;
   float r = aspectRatio * t;
   float l = -r;
-  Matrix4x4 trans(2.0f / (r - l), 0, 0, 0,
+  Matrix4x4 scale(2.0f / (r - l), 0, 0, 0,
                   0, 2.0f / (t - b), 0, 0,
                   0, 0, 2.0f / (f - n), 0,
                   0, 0, 0, 1);
-  Matrix4x4 scale(1, 0, 0, -(r + l) / 2.0f,
+  Matrix4x4 trans(1, 0, 0, -(r + l) / 2.0f,
                   0, 1, 0, -(t + b) / 2.0f,
                   0, 0, 1, -(f + n) / 2.0f,
                   0, 0, 0, 1);
@@ -168,7 +182,47 @@ inline Matrix4x4 PerspectiveRH(float fov, float aspectRatio, float zNear, float 
                   0, n, 0, 0,
                   0, 0, -(n + f), -(n * f),
                   0, 0, -1, 0);
-  return Mul(Mul(trans, scale), persp);
+  return Mul(Mul(scale, trans), persp);
+}
+
+constexpr Matrix4x4 OrthoRH(float l, float r, float b, float t, float n, float f) {
+  Matrix4x4 scale(2.0f / (r - l), 0, 0, 0,
+                  0, 2.0f / (t - b), 0, 0,
+                  0, 0, 2.0f / (n - f), 0,  //in right-hand system,near bigger than far
+                  0, 0, 0, 1);
+  Matrix4x4 trans(1, 0, 0, -(r + l) / 2.0f,
+                  0, 1, 0, -(t + b) / 2.0f,
+                  0, 0, 1, (n + f) / 2.0f,
+                  0, 0, 0, 1);
+  return Mul(scale, trans);
+}
+
+constexpr Matrix4x4 Translation(const Vector3& pos) {
+  return Matrix4x4(1, 0, 0, pos.x,
+                   0, 1, 0, pos.y,
+                   0, 0, 1, pos.z,
+                   0, 0, 0, 1);
+}
+
+constexpr Matrix4x4 Translate(const Matrix4x4& m, const Vector3& v) {
+  Vector4 result = Mul(m, Vector4(v.x, v.y, v.z, 1));
+  Matrix4x4 r = m;
+  r.m14 = result.x;
+  r.m24 = result.y;
+  r.m34 = result.z;
+  r.m44 = result.w;
+  return r;
+}
+
+constexpr Matrix4x4 Scale(const Vector3& scale) {
+  return Matrix4x4(scale.x, 0, 0, 0,
+                   0, scale.y, 0, 0,
+                   0, 0, scale.z, 0,
+                   0, 0, 0, 1);
+}
+
+constexpr Matrix4x4 Scale(const Matrix4x4& m, const Vector3& scale) {
+  return Mul(m, Scale(scale));
 }
 
 }  // namespace Mine

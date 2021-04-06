@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(src_dir "src")
 set(thirdparty_dir "thirdparty")
 
-project(MinElemental VERSION 0.0.1)
+project(MinExp VERSION 0.0.1)
 
 if(WIN32)
   add_definitions(-D MINE_PLATFORM_WIN32)

@@ -21,7 +21,10 @@ struct Camera {
                        fov(ToRadians(60.0f)) {}
 
   constexpr Matrix4x4 View() const { return LookAtRH(pos, target, up); }
-  inline Matrix4x4 Projection() const { return PerspectiveRH(fov, aspect, zNear, zFar); }
+  inline Matrix4x4 Projection() const {
+    return PerspectiveRH(fov, aspect, zNear, zFar);
+    // return Mine::OrthoRH(-10, 10, -10, 10, 0.1f, 100);
+  }
 };
 
 /*
@@ -29,12 +32,15 @@ struct Camera {
  */
 class OrbitMotion {
  private:
-  Vector2 _pos;
+  Vector2 _cursePos;
   Vector2 _deltaOrbit;
-  Vector2 _deltaLook;
+  Vector2 _deltaPan;
   Vector2 _dolly;
 
  public:
+  float panSpeed = 0.0008f;
+  float orbitSpeed = 0.5f;
+
   void UpdateData(int height);
   void UpdateCamera(Camera& camera);
 };
